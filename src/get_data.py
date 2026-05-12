@@ -216,6 +216,9 @@ def persist_sample_bundles(
     output_dir = Path(output_dir)
     records = export_sample_bundles(bundles, output_dir=output_dir, prefix=prefix)
     records = records.copy()
+    records["audio_path"] = records["audio_path"].map(
+        lambda path: Path(path).relative_to(output_dir).as_posix()
+    )
     records["dataset"] = "NTRLab MediaSpeech ES"
     records["license"] = MEDIA_SPEECH_LICENSE
     records["source_url"] = MEDIA_SPEECH_URL
@@ -231,9 +234,12 @@ def persist_sample_bundles(
 def load_persisted_samples(
     samples_dir: str | Path = SRC_SAMPLES_DIR,
     index_name: str = "index.jsonl",
+    resolve_paths: bool = True,
+    path_column: str = "resolved_audio_path",
 ) -> pd.DataFrame:
     """Read persisted bundle sample metadata from src/samples."""
-    index_path = Path(samples_dir) / index_name
+    samples_dir = Path(samples_dir)
+    index_path = samples_dir / index_name
     if not index_path.exists():
         raise FileNotFoundError(
             f"Sample index not found: {index_path}. Run persist_sample_bundles first."
@@ -245,7 +251,18 @@ def load_persisted_samples(
             line = line.strip()
             if line:
                 records.append(json.loads(line))
-    return pd.DataFrame(records)
+
+    samples = pd.DataFrame(records)
+    if samples.empty:
+        return samples
+
+    if resolve_paths:
+        samples[path_column] = samples["audio_path"].map(
+            lambda path: str(samples_dir / Path(*Path(path).parts))
+        )
+    elif path_column != "audio_path" and "audio_path" in samples.columns:
+        samples[path_column] = samples["audio_path"]
+    return samples
 
 
 def mediaspeech_license_info() -> dict:
@@ -318,7 +335,8 @@ def display_audio_sample(row: pd.Series | dict):
     from IPython.display import HTML, display
 
     record = dict(row)
-    audio_path = ensure_notebook_wav(record["audio_path"])
+    source_path = record.get("resolved_audio_path") or record["audio_path"]
+    audio_path = ensure_notebook_wav(source_path)
     audio_data = base64.b64encode(audio_path.read_bytes()).decode("ascii")
     display(HTML(f'<audio controls preload="metadata" src="data:audio/wav;base64,{audio_data}"></audio>'))
     display(pd.DataFrame([record]))
