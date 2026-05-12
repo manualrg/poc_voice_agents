@@ -1,43 +1,50 @@
 # poc-sst-soa
 
-Deployment-only foundation for a GCP text-to-speech PoC.
+PoC to try Qwen3 STT and TTS models with Colab.
 
-This repository provisions a single configurable GPU model worker VM and provides
-the runtime scripts needed to serve one vLLM-Omni TTS model at a time.
+## Target models
 
-## What is included
+- `Qwen/Qwen3-ASR-0.6B`
+- `Qwen/Qwen3-TTS-12Hz-0.6B-Base`
 
-- Terraform for a private-by-default GCP VM deployment.
-- A reusable `model_worker_vm` Terraform module.
-- vLLM-Omni start/stop/healthcheck scripts for:
-  - `mistralai/Voxtral-4B-TTS-2603`
-  - `Qwen/Qwen3-TTS-12Hz-0.6B-Base`
-  - `Qwen/Qwen3-TTS-12Hz-1.7B-Base`
-- Deployment and validation docs.
+## Deployment
 
-## What is intentionally excluded
+- Google Colab with GPU T4 access.
+- STT uses the official `qwen-asr` package.
+- TTS uses the official `qwen-tts` package and imports `qwen_tts`.
+- Model weights are downloaded from Hugging Face during notebook execution.
 
-- STT models such as Parakeet.
-- Frontend UI.
-- Notebooks.
-- Sample analysis tooling.
-- Experiment tracking and generated PoC artifacts.
+Use a Colab GPU runtime before running the model load cells:
 
-## Default deployment shape
+```text
+Runtime -> Change runtime type -> Hardware accelerator -> T4 GPU
+```
 
-- GCP Compute Engine VM.
-- `n1-standard-8`.
-- 1x attached NVIDIA T4 16GB GPU.
-- Default zone: `europe-west4-a`.
-- Deep Learning VM Base GPU image with Ubuntu 22.04, CUDA 12.9, and NVIDIA 580.
-- 200 GB balanced persistent disk.
-- Inference service on port `8091`.
-- No public inference ingress rule.
-- SSH access through IAP.
+## Notebooks
 
+### `01-stt-check-load.ipynb`
 
-## Instructions
+- Installs and checks the Colab GPU runtime.
+- Loads `Qwen/Qwen3-ASR-0.6B`.
+- Provides notebook widgets to record or upload audio and transcribe it.
+- Runs configurable load tests over an audio sample.
+- Emits STT KPIs: latency, realtime factor, throughput, failure count, and GPU memory.
 
-The document describes the infrastructure deployment process [docs/deployment_runbook.md](docs/deployment_runbook.md). Important, read the document before running any cloud deployment command.
+### `02-tts-check-load.ipynb`
 
-Terraform is intentionally single-environment for this PoC. Run it from `infra/terraform`.
+- Installs and checks the Colab GPU runtime.
+- Loads `Qwen/Qwen3-TTS-12Hz-0.6B-Base`.
+- Provides notebook widgets for text, language, reference audio, reference text, and playback.
+- Runs configurable load tests over repeated text prompts.
+- Emits TTS KPIs: latency, generated audio throughput, failure count, and GPU memory.
+
+## Cost Translation
+
+The notebooks produce performance KPIs and leave price inputs configurable. To convert a measured run into a cost estimate, provide your own Colab T4 runtime cost:
+
+```text
+eur_per_runtime_min = eur_per_runtime_hour / 60
+eur_per_audio_min = eur_per_runtime_min / audio_minutes_processed_per_runtime_min
+```
+
+For STT, `audio_minutes_processed_per_runtime_min` is based on input audio duration. For TTS, it is based on generated output audio duration.
