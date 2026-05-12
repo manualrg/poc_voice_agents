@@ -33,6 +33,28 @@ def transcribe_audio(asr_model, audio_path, language=None):
     }
 
 
+def transcribe_audio_batch(asr_model, audio_batch, language=None):
+    utils.reset_gpu_peak()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    batch_size = len(audio_batch)
+    language_batch = [language] * batch_size if language else None
+
+
+    started = time.perf_counter()
+    results = asr_model.transcribe(audio=audio_batch, language=language_batch)
+    latency = time.perf_counter() - started
+    return {
+        'batch_size': batch_size,
+        'latency_seconds': latency,
+        'languages': [getattr(r, 'language', None) for r in results],
+        'texts': [getattr(r, 'text', str(r)) for r in results],
+    }
+
+
+
 
 def percentile(values, p):
     values = sorted(float(v) for v in values if v is not None and not math.isnan(float(v)))
@@ -65,6 +87,81 @@ def summarize_stt_runs(rows):
         'gpu_memory_after': utils.gpu_snapshot(),
     }
 
+
+def estimate_stt_cost_from_summary(summary, eur_per_runtime_minute):
+    """Convert STT throughput metrics into transcription cost estimates."""
+    throughput = summary.get('audio_minutes_processed_per_runtime_minute')
+    if not throughput:
+        return {
+            'eur_per_runtime_minute': float(eur_per_runtime_minute),
+            'audio_minutes_processed_per_runtime_minute': throughput,
+            'eur_per_transcribed_audio_minute': None,
+            'eur_per_transcribed_audio_hour': None,
+            'transcribed_audio_minutes_per_eur': None,
+        }
+
+    eur_per_audio_minute = float(eur_per_runtime_minute) / float(throughput)
+    return {
+        'eur_per_runtime_minute': float(eur_per_runtime_minute),
+        'audio_minutes_processed_per_runtime_minute': float(throughput),
+        'eur_per_transcribed_audio_minute': eur_per_audio_minute,
+        'eur_per_transcribed_audio_hour': eur_per_audio_minute * 60,
+        'transcribed_audio_minutes_per_eur': 1 / eur_per_audio_minute if eur_per_audio_minute else None,
+    }
+
+
+def summarize_stt_costs(rows_df, eur_per_runtime_minute, include_warmup=False, group_by=('batch_size',)):
+    """Summarize measured STT cost globally or grouped by batch size."""
+    measured = rows_df.copy()
+    if not include_warmup and 'warmup' in measured.columns:
+        measured = measured[~measured['warmup']]
+    measured = measured[measured['ok']]
+
+    group_columns = list(group_by or [])
+    if group_columns:
+        grouped = measured.groupby(group_columns, dropna=False)
+        records = []
+        for group_key, group in grouped:
+            record = _stt_cost_record(group, eur_per_runtime_minute)
+            if len(group_columns) == 1:
+                record[group_columns[0]] = group_key
+            else:
+                for column, value in zip(group_columns, group_key):
+                    record[column] = value
+            records.append(record)
+        ordered = group_columns + [
+            'runs',
+            'audio_minutes',
+            'runtime_minutes',
+            'audio_minutes_processed_per_runtime_minute',
+            'eur_per_runtime_minute',
+            'eur_per_transcribed_audio_minute',
+            'eur_per_transcribed_audio_hour',
+        ]
+        return pd.DataFrame(records)[ordered]
+
+    return pd.DataFrame([_stt_cost_record(measured, eur_per_runtime_minute)])
+
+
+def _stt_cost_record(rows_df, eur_per_runtime_minute):
+    audio_minutes = float(rows_df['audio_seconds'].sum() / 60)
+    runtime_minutes = float(rows_df['latency_seconds'].sum() / 60)
+    throughput = audio_minutes / runtime_minutes if runtime_minutes else None
+    eur_per_audio_minute = (
+        float(eur_per_runtime_minute) / throughput
+        if throughput
+        else None
+    )
+    return {
+        'runs': int(len(rows_df)),
+        'audio_minutes': audio_minutes,
+        'runtime_minutes': runtime_minutes,
+        'audio_minutes_processed_per_runtime_minute': throughput,
+        'eur_per_runtime_minute': float(eur_per_runtime_minute),
+        'eur_per_transcribed_audio_minute': eur_per_audio_minute,
+        'eur_per_transcribed_audio_hour': eur_per_audio_minute * 60 if eur_per_audio_minute else None,
+    }
+
 def _sample_records(audio_source):
     if isinstance(audio_source, (str, bytes)) or hasattr(audio_source, "__fspath__"):
         audio_path = str(audio_source)
@@ -92,29 +189,7 @@ def _sample_records(audio_source):
     return records
 
 
-def transcribe_audio_batch(asr_model, audio_source, batch_size=1, language=None):
-    utils.reset_gpu_peak()
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    records = _sample_records(audio_source)
-    selected = records[: int(batch_size)]
-    duration = sum(record["audio_seconds"] for record in selected)
-    audio_batch = [record["audio_path"] for record in selected]
-    language_batch = [language] * len(selected) if language else None
-    started = time.perf_counter()
-    results = asr_model.transcribe(audio=audio_batch, language=language_batch)
-    latency = time.perf_counter() - started
-    return {
-        'batch_size': len(selected),
-        'audio_ids': [record["audio_id"] for record in selected],
-        'reference_texts': [record["reference_text"] for record in selected],
-        'audio_seconds': duration,
-        'latency_seconds': latency,
-        'realtime_factor': latency / duration if duration else None,
-        'languages': [getattr(r, 'language', None) for r in results],
-        'texts': [getattr(r, 'text', str(r)) for r in results],
-    }
+
 
 def run_stt_load_test(asr_model, audio_source, repeats=5, warmup_runs=1, batch_sizes=None, language="Spanish"):
     batch_sizes = batch_sizes or [1]
