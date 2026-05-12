@@ -34,10 +34,10 @@ Thumbs.db
 # Generated outputs/logs
 *.wav
 *.mp3
-*.flac
 *.ogg
 *.log
 outputs/
 artifacts/
+data/NTRLabMediaSpeech/
 data/NTRLabMediaSpeech/extracted/
 data/NTRLabMediaSpeech/samples/
