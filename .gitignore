@@ -19,6 +19,8 @@ override.tf.json
 # Python/cache
 __pycache__/
 *.py[cod]
+.venv/
+.uv-cache/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -37,3 +39,5 @@ Thumbs.db
 *.log
 outputs/
 artifacts/
+data/NTRLabMediaSpeech/extracted/
+data/NTRLabMediaSpeech/samples/
